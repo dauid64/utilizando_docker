@@ -1,14 +1,26 @@
 services:
-  db:
+  redis:
+    container_name: redis
+    image: redis:7.2.3-alpine
+    restart: always
+
+  postgresql:
+    container_name: postgresql
     image: postgres:latest
     volumes:
       - ./data/db/data:/var/lib/postgresql/data
     env_file:
       - ./dotenv_files/.env
     restart: always
-  web:
+
+  django:
+    container_name: django
     build: .
-    command: gunicorn project.wsgi:application --bind 0.0.0.0:8000
+    command: sh -c "
+      python manage.py makemigrations --noinput
+      && python manage.py migrate --noinput
+      && python manage.py collectstatic --noinput
+      && gunicorn project.wsgi:application --bind 0.0.0.0:8000"
     volumes:
       - ./project:/project
       - ./data/web/static:/data/web/static
@@ -19,13 +31,31 @@ services:
       - "8000:8000"
     restart: always
     depends_on:
-      - db
+      - postgresql
+      - redis
+    
+  celery:
+    container_name: celery
+    build: .
+    command: celery -A project worker -l INFO
+    volumes:
+      - ./project:/project
+      - ./data/web/static:/data/web/static
+      - ./data/web/media:/data/web/media
+    env_file:
+      - ./dotenv_files/.env
+    restart: always
+    depends_on:
+      - redis
+      - django
+
   nginx:
+    container_name: nginx
     build: ./nginx
     volumes:
       - ./data/web/static:/data/web/static
       - ./data/web/media:/data/web/media
     ports:
-      - "1337:80"
+      - "80:80"
     depends_on:
-      - web
+      - django
